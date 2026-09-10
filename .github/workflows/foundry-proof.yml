@@ -1,0 +1,72 @@
+name: Foundry composition proof
+
+on:
+  push:
+    branches:
+      - codex/foundry-composition-proof
+    paths:
+      - .github/workflows/foundry-proof.yml
+      - examples/shrine_foundry/**
+      - crates/component-shell/tests/foundry_composition_host.rs
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**/Cargo.toml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundry-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-arm64:
+    name: Native Foundry proof
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare stable Rust on arm64
+        run: |
+          test "$(uname -m)" = arm64
+          rustup toolchain install stable --profile minimal
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: foundry-proof-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+      - name: Test fixture contracts
+        run: node --test examples/shrine_foundry/fixture.test.mjs
+      - name: Test native composition
+        run: cargo test --locked -p gpui-component-shell --test foundry_composition_host
+      - name: Prepare matching shell binary
+        run: |
+          if [ ! -x target/debug/gpui-component-shell ]; then
+            cargo build --locked -p gpui-component-shell -p gpui-kit --features gpui-kit/test-support
+          fi
+          lipo -verify_arch arm64 target/debug/gpui-component-shell
+          mkdir -p proof
+          cp target/debug/gpui-component-shell proof/
+          printf '%s\n' "$GITHUB_SHA" > proof/COMMIT
+          (cd proof && shasum -a 256 gpui-component-shell > SHA256SUMS)
+          tar -czf gpui-component-shell-macos-arm64.tar.gz -C proof gpui-component-shell COMMIT SHA256SUMS
+      - name: Upload macOS arm64 proof binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-component-shell-macos-arm64-proof-${{ github.sha }}
+          path: gpui-component-shell-macos-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 7
