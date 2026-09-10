@@ -39,15 +39,19 @@ jobs:
         run: |
           test "$(uname -m)" = arm64
           rustup toolchain install stable --profile minimal
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Restore Cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: foundry-proof-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+          key: foundry-proof-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            foundry-proof-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-
+            foundry-proof-${{ runner.os }}-${{ runner.arch }}-
       - name: Test fixture contracts
         run: node --test examples/shrine_foundry/fixture.test.mjs
       - name: Test native composition
@@ -55,7 +59,7 @@ jobs:
       - name: Prepare matching shell binary
         run: |
           if [ ! -x target/debug/gpui-component-shell ]; then
-            cargo build --locked -p gpui-component-shell -p gpui-kit --features gpui-kit/test-support
+            cargo build --locked -p gpui-component-shell -p gpui-base --features gpui-base/test-support
           fi
           lipo -verify_arch arm64 target/debug/gpui-component-shell
           mkdir -p proof
@@ -63,6 +67,16 @@ jobs:
           printf '%s\n' "$GITHUB_SHA" > proof/COMMIT
           (cd proof && shasum -a 256 gpui-component-shell > SHA256SUMS)
           tar -czf gpui-component-shell-macos-arm64.tar.gz -C proof gpui-component-shell COMMIT SHA256SUMS
+      - name: Save Cargo cache
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Upload macOS arm64 proof binary
         uses: actions/upload-artifact@v4
         with:

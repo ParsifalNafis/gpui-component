@@ -1,7 +1,7 @@
 //! Exercises the Foundry example through the public shell host and native UI.
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
-use gpui_kit::test::TestWindowExt as _;
+use gpui_base::test_support;
 use std::{
     fs,
     ops::Deref,
@@ -80,7 +80,28 @@ fn mount(cx: &mut TestAppContext) -> (VisualTestContext, Entity<gpui_shell::Scri
 
 fn draw(context: &mut VisualTestContext) {
     context.run_until_parked();
-    context.update(|window, cx| window.render_frame(cx));
+    context.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+}
+
+fn click_button(context: &mut VisualTestContext, id: &'static str, label: &str) {
+    draw(context);
+    let position = context.update(|window, _| {
+        let button = test_support::find(window, &[], &id.into()).unwrap_or_else(|| {
+            panic!(
+                "missing button {id}: {}",
+                test_support::registered_paths(window)
+            )
+        });
+        assert_eq!(button.role(), Some(gpui::Role::Button));
+        assert_eq!(button.label(), Some(label));
+        assert!(button.visible(), "button {id} must be visible");
+        button.bounds().center()
+    });
+    context.simulate_mouse_move(position, None, Default::default());
+    context.simulate_click(position, Default::default());
 }
 
 fn snapshot(context: &mut VisualTestContext, view: &Entity<gpui_shell::ScriptView>) -> String {
@@ -120,12 +141,11 @@ fn native_actions_preserve_the_shared_draft_when_the_source_changes(cx: &mut Tes
         assert!(tree.contains(expected), "missing {expected}: {tree}");
     }
 
-    context.update(|window, cx| {
-        let button = window.find("fixture:external-update");
-        assert_eq!(button.role(), Some(gpui::Role::Button));
-        assert_eq!(button.label(), Some("Simulate external edit"));
-        window.click("fixture:external-update", cx);
-    });
+    click_button(
+        &mut context,
+        "fixture:external-update",
+        "Simulate external edit",
+    );
     draw(&mut context);
     let changed = snapshot(&mut context, &view);
     for expected in [
@@ -141,7 +161,7 @@ fn native_actions_preserve_the_shared_draft_when_the_source_changes(cx: &mut Tes
         "both appearances must retain the same original draft base: {changed}",
     );
 
-    context.update(|window, cx| window.click("appearance-editor-a:commit", cx));
+    click_button(&mut context, "appearance-editor-a:commit", "Commit");
     draw(&mut context);
     let refused = snapshot(&mut context, &view);
     for expected in [
