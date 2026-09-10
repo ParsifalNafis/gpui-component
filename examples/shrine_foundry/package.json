@@ -1,0 +1,8 @@
+{
+  "name": "shrine-foundry-composition-proof",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test fixture.test.mjs"
+  }
+}
