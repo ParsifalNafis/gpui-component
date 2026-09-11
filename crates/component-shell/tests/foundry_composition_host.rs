@@ -102,6 +102,82 @@ fn snapshot(context: &mut VisualTestContext, view: &Entity<gpui_shell::ScriptVie
     })
 }
 
+fn native_inputs(
+    context: &mut VisualTestContext,
+    appearance: &'static str,
+) -> Vec<test_support::ElementSnapshot> {
+    draw(context);
+    context.update(|window, _| {
+        let scope = test_support::scope(window, &[], &appearance.into());
+        test_support::snapshots(window)
+            .into_iter()
+            .filter(|element| {
+                element.path().starts_with(&scope) && element.role() == Some(gpui::Role::TextInput)
+            })
+            .collect()
+    })
+}
+
+fn click_input(
+    context: &mut VisualTestContext,
+    appearance: &'static str,
+) -> test_support::ElementSnapshot {
+    let inputs = native_inputs(context, appearance);
+    assert_eq!(
+        inputs.len(),
+        1,
+        "one native input in {appearance}: {inputs:?}"
+    );
+    let input = inputs[0].clone();
+    assert!(input.visible(), "input in {appearance} must be visible");
+    let position = input.bounds().center();
+    context.simulate_mouse_move(position, None, Default::default());
+    context.simulate_click(position, Default::default());
+    draw(context);
+    input
+}
+
+fn select_input_text(context: &mut VisualTestContext) {
+    #[cfg(target_os = "macos")]
+    context.simulate_keystrokes("cmd-a");
+    #[cfg(not(target_os = "macos"))]
+    context.simulate_keystrokes("ctrl-a");
+}
+
+fn replace_input(context: &mut VisualTestContext, appearance: &'static str, text: &str) {
+    click_input(context, appearance);
+    select_input_text(context);
+    // Follow Kit's native input helper: key_char reaches GPUI's text input
+    // handler, including spaces, rather than treating a whole word as a chord.
+    for character in text.chars() {
+        let text = character.to_string();
+        let mut key = gpui::Keystroke::parse(&text).expect("a character is a valid keystroke");
+        key.key_char = Some(text);
+        context.update(|window, cx| window.dispatch_keystroke(key, cx));
+        draw(context);
+    }
+}
+
+fn copied_input(context: &mut VisualTestContext, appearance: &'static str) -> String {
+    click_input(context, appearance);
+    select_input_text(context);
+    // The shell's Input frame exposes its native role and bounds, but not an
+    // accessibility value. Observe the editor through its real Copy command.
+    context.update(|_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("copy did not run".into()));
+    });
+    #[cfg(target_os = "macos")]
+    context.simulate_keystrokes("cmd-c");
+    #[cfg(not(target_os = "macos"))]
+    context.simulate_keystrokes("ctrl-c");
+    context.run_until_parked();
+    context.update(|_, cx| {
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .expect("native Copy must produce text")
+    })
+}
+
 #[gpui::test]
 fn native_actions_preserve_the_shared_draft_when_the_source_changes(cx: &mut TestAppContext) {
     let (mut context, view, _app) = mount(cx);
@@ -147,4 +223,88 @@ fn native_actions_preserve_the_shared_draft_when_the_source_changes(cx: &mut Tes
         2,
         "a refused native commit must not replace or rebase the shared draft: {refused}",
     );
+}
+
+#[gpui::test]
+fn native_editing_survives_move_and_remount_without_widening_commit_authority(
+    cx: &mut TestAppContext,
+) {
+    const A: &str = "appearance-editor-a";
+    const B: &str = "appearance-editor-b";
+    const DRAFT: &str = "A shared native draft";
+    const RESUMED: &str = "Resumed native draft";
+
+    let (mut context, view, _app) = mount(cx);
+    replace_input(&mut context, A, DRAFT);
+    for appearance in [A, B] {
+        assert_eq!(
+            copied_input(&mut context, appearance),
+            DRAFT,
+            "native typing in A must update the editor in {appearance}",
+        );
+    }
+    let edited = snapshot(&mut context, &view);
+    assert!(edited.contains("A continuous body of work"), "{edited}");
+    assert!(
+        edited.contains("source-document-42 · revision 1"),
+        "{edited}"
+    );
+    assert_eq!(edited.matches("uncommitted draft").count(), 2, "{edited}");
+
+    let original_input_id = native_inputs(&mut context, A)[0]
+        .path()
+        .last()
+        .expect("native input has an observed identity")
+        .clone();
+    click_button(&mut context, "appearance-editor-a:move", "Move");
+    draw(&mut context);
+    let moved = snapshot(&mut context, &view);
+    assert!(moved.contains("Appearance A · embedded"), "{moved}");
+    assert!(moved.contains("Appearance B · main"), "{moved}");
+    assert_eq!(
+        native_inputs(&mut context, A)[0].path().last(),
+        Some(&original_input_id),
+        "moving the appearance must retain its native editor",
+    );
+    assert_eq!(copied_input(&mut context, A), DRAFT);
+
+    click_button(&mut context, "appearance-editor-a:unmount", "Close");
+    assert!(native_inputs(&mut context, A).is_empty());
+    assert_eq!(copied_input(&mut context, B), DRAFT);
+    click_button(
+        &mut context,
+        "appearance-editor-a:mount",
+        "Reopen appearance",
+    );
+    assert_ne!(
+        native_inputs(&mut context, A)[0].path().last(),
+        Some(&original_input_id),
+        "reopening must create a new editor after releasing the closed one",
+    );
+    assert_eq!(copied_input(&mut context, A), DRAFT);
+    // A fresh edit also verifies that the remounted editor's event subscription
+    // still reaches the shared Flow; showing its initial value is insufficient.
+    replace_input(&mut context, A, RESUMED);
+    assert_eq!(copied_input(&mut context, B), RESUMED);
+
+    click_button(
+        &mut context,
+        "fixture:toggle-authority",
+        "Restrict appearance B",
+    );
+    assert!(native_inputs(&mut context, B).is_empty());
+    click_button(&mut context, "appearance-editor-b:commit", "Commit");
+    draw(&mut context);
+    let refused = snapshot(&mut context, &view);
+    for expected in [
+        "Outcome: refused / outside-envelope",
+        "This appearance does not admit that action.",
+        "Read only: Resumed native draft",
+        "A continuous body of work",
+        "source-document-42 · revision 1",
+    ] {
+        assert!(refused.contains(expected), "missing {expected}: {refused}");
+    }
+    assert_eq!(refused.matches("Base revision 1").count(), 2, "{refused}");
+    assert_eq!(copied_input(&mut context, A), RESUMED);
 }
