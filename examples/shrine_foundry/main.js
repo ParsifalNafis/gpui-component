@@ -1,12 +1,14 @@
 import { View } from "gpui-kit";
 import { InputState } from "gpui-base";
 import { createFixture } from "./fixture.js";
-import { realize, slot, text } from "./foundry.js";
+import { realize, scope, slot, text } from "./foundry.js";
+import { documentCard } from "./document-card.js";
 import { gpuiBindings } from "./gpui-bindings.js";
 
 export default class FoundryWorkbench extends View {
   init() {
     this.host = createFixture();
+    this.referenceExpanded = false;
     this.inputs = new Map();
     this.syncInputs();
   }
@@ -52,9 +54,7 @@ export default class FoundryWorkbench extends View {
   appearance(view) {
     const name = view.id === this.host.ids.primary ? "Appearance A" : "Appearance B";
     const source = this.host.snapshot().sources.find(item => item.id === view.sourceId);
-    const draftStatus = view.draft.baseRevision !== source.revision
-      ? "source changed"
-      : (view.draft.dirty ? "uncommitted draft" : "saved");
+    const reference = view.placement === "embedded";
     const actions = view.mounted ? [
       this.action(`${view.id}:commit`, "Commit", () => this.host.commit(view.id), true),
       this.action(`${view.id}:rebase`, "Keep draft on latest", () => this.host.rebase(view.id)),
@@ -68,23 +68,33 @@ export default class FoundryWorkbench extends View {
       this.action(`${view.id}:unmount`, "Close", () => this.host.unmount(view.id)),
     ] : [this.action(`${view.id}:mount`, "Reopen appearance", () => this.host.mount(view.id))];
 
-    return slot("appearance", {
-      heading: text(`${name} · ${view.placement}`, "title"),
-      identity: slot("identity", { items: [
-        text(`Source: ${view.sourceId}`, "muted"),
-        text(`Flow: ${view.flowId}`, "muted"),
-        text(`Route: ${view.id}`, "muted"),
-      ] }),
-      content: view.mounted
-        ? (view.allowedActions.includes("edit")
-          ? slot("input", {}, { state: this.inputs.get(view.id) })
-          : text(`Read only: ${view.draft.title}`))
-        : text("Appearance closed. The shared draft remains in its Flow."),
+    const card = documentCard(view, {
+      source,
+      editor: slot("input", {}, { state: this.inputs.get(view.id) }),
       actions: slot("actions", { items: actions }),
-      state: text(view.mounted
-        ? `Base revision ${view.draft.baseRevision} · ${draftStatus} · ${view.allowedActions.length ? "actions admitted" : "actions refused"}`
-        : "Local input released; reopen to create a fresh native editor.", "muted"),
-    }, { id: view.id });
+      heading: slot("identity", { items: [
+        text(reference ? "Document reference" : "Working document", "title"),
+        text(`${name} · ${view.placement}`, "muted"),
+      ] }),
+      footer: text(reference
+        ? "This reference stays connected to the working draft."
+        : "Keep writing here.", "muted"),
+    });
+    const id = reference ? "context:reference" : "context:desk";
+    const overrides = reference ? {
+      document: this.referenceExpanded ? "expanded" : "compact",
+      density: this.referenceExpanded ? "comfortable" : "compact",
+      surface: "muted",
+    } : {};
+    // Context belongs to the embedding location. Moving an appearance into
+    // another location changes its presentation, not its source or editor.
+    return scope(id, overrides, slot("embedding", {
+      heading: text(reference ? "Reading pane" : "Writing desk", "title"),
+      tools: reference ? this.action("context:reference:toggle",
+        this.referenceExpanded ? "Compact reference" : "Expand reference",
+        () => { this.referenceExpanded = !this.referenceExpanded; }) : null,
+      content: card,
+    }, { id }));
   }
 
   render(cx) {
@@ -94,8 +104,8 @@ export default class FoundryWorkbench extends View {
     const secondary = snapshot.projections.find(view => view.id === this.host.ids.secondary);
     const ordered = [...snapshot.projections].sort((a, b) => (a.placement === "main" ? -1 : 1) - (b.placement === "main" ? -1 : 1));
     return realize(slot("workbench", {
-      heading: text("Foundry / GPUI composition", "heading"),
-      description: text("One source. One working draft. Two independent native appearances."),
+      heading: text("One document, two contexts", "heading"),
+      description: text("Edit either title. Change the reading pane’s presentation; the writing desk stays the same."),
       tools: slot("actions", { items: [
         this.action("fixture:external-update", "Simulate external edit", () => this.host.externalUpdate(this.host.ids.source, "Updated elsewhere")),
         this.action("fixture:toggle-authority", secondary.allowedActions.length ? "Restrict appearance B" : "Restore appearance B", () =>

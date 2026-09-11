@@ -178,6 +178,256 @@ fn copied_input(context: &mut VisualTestContext, appearance: &'static str) -> St
     })
 }
 
+fn description_subtree(tree: &str, id: &str) -> String {
+    let marker = format!(":id[Str({id:?})]");
+    let lines: Vec<_> = tree.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.contains(&marker))
+        .unwrap_or_else(|| panic!("missing described element {id}: {tree}"));
+    let depth = lines[start].len() - lines[start].trim_start().len();
+    std::iter::once(lines[start])
+        .chain(
+            lines[start + 1..]
+                .iter()
+                .copied()
+                .take_while(|line| line.len() - line.trim_start().len() > depth),
+        )
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn document_background(
+    context: &mut VisualTestContext,
+    appearance: &'static str,
+    commit: &'static str,
+) -> gpui::Background {
+    let inputs = native_inputs(context, appearance);
+    assert_eq!(inputs.len(), 1, "one native editor in {appearance}");
+    context.update(|window, _| {
+        let button = test_support::find(window, &[], &commit.into()).expect("native Commit button");
+        let input = inputs[0].bounds().center().scale(window.scale_factor());
+        let button = button.bounds().center().scale(window.scale_factor());
+        // Read the actual painted surface shared by these two native controls.
+        // Their measured geometry identifies the surface; no screen coordinates
+        // or expected pixel dimensions are part of the contract.
+        window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| {
+                !quad.background.is_transparent()
+                    && quad.bounds.contains(&input)
+                    && quad.bounds.contains(&button)
+                    && quad.content_mask.bounds.contains(&input)
+                    && quad.content_mask.bounds.contains(&button)
+            })
+            .min_by(|left, right| {
+                let area = |quad: &gpui::Quad| quad.bounds.size.width.0 * quad.bounds.size.height.0;
+                area(left).total_cmp(&area(right))
+            })
+            .unwrap_or_else(|| panic!("missing painted document surface in {appearance}"))
+            .background
+    })
+}
+
+#[gpui::test]
+fn local_recipe_override_preserves_the_other_context_theme_and_native_editors(
+    cx: &mut TestAppContext,
+) {
+    const A: &str = "appearance-editor-a";
+    const B: &str = "appearance-editor-b";
+    const DRAFT: &str = "One draft across two contexts";
+
+    let (mut context, view, _app) = mount(cx);
+    draw(&mut context);
+    let (base_theme, component_theme) = context.update(|_, cx| {
+        (
+            gpui_base::Theme::global(cx),
+            serde_json::to_value(gpui_component::Theme::global(cx))
+                .expect("serialize global theme"),
+        )
+    });
+    replace_input(&mut context, A, DRAFT);
+    let input_paths = [A, B].map(|appearance| {
+        assert_eq!(copied_input(&mut context, appearance), DRAFT);
+        native_inputs(&mut context, appearance)[0].path().to_vec()
+    });
+    let before = snapshot(&mut context, &view);
+    let desk = description_subtree(&before, "context:desk");
+    let writing = description_subtree(&before, A);
+    let reference = description_subtree(&before, B);
+    assert!(
+        writing.lines().next().unwrap().contains(" .p_4 .gap_3"),
+        "{writing}"
+    );
+    assert!(
+        reference.lines().next().unwrap().contains(" .p_3 .gap_2"),
+        "{reference}"
+    );
+    assert!(
+        writing
+            .lines()
+            .any(|line| line.contains("Input #") && line.contains(" .h_9")),
+        "{writing}"
+    );
+    assert!(
+        reference
+            .lines()
+            .any(|line| line.contains("Input #") && line.contains(" .h_8")),
+        "{reference}"
+    );
+    assert!(writing.contains("Flow: flow-working"), "{writing}");
+    assert!(
+        !reference.contains("Flow: flow-working"),
+        "the compact recipe must omit the identity slot: {reference}"
+    );
+    for (document, heading, footer, absent_footer) in [
+        (
+            &writing,
+            "Working document",
+            "Keep writing here.",
+            "This reference stays connected to the working draft.",
+        ),
+        (
+            &reference,
+            "Document reference",
+            "This reference stays connected to the working draft.",
+            "Keep writing here.",
+        ),
+    ] {
+        assert!(
+            document.contains(heading) && document.contains(footer),
+            "{document}"
+        );
+        assert!(
+            !document.contains(absent_footer),
+            "caller slots crossed contexts: {document}"
+        );
+    }
+
+    // cx.theme() exposes colors as six-digit sRGB strings, so compare the
+    // native paint with that public bridge's channel precision.
+    let shell_background = |color: gpui::Hsla| -> gpui::Background {
+        let color = gpui::Rgba::from(color);
+        let channel = |value: f32| (value.clamp(0., 1.) * 255.).round() as u32;
+        gpui::rgb((channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b)).into()
+    };
+    let desk_background = shell_background(base_theme.tokens.colors.surface);
+    let reference_background = shell_background(base_theme.tokens.colors.muted);
+    assert_ne!(
+        desk_background, reference_background,
+        "fixture contexts need distinct semantic surfaces"
+    );
+    assert_eq!(
+        document_background(&mut context, A, "appearance-editor-a:commit"),
+        desk_background
+    );
+    assert_eq!(
+        document_background(&mut context, B, "appearance-editor-b:commit"),
+        reference_background
+    );
+
+    click_button(&mut context, "context:reference:toggle", "Expand reference");
+    draw(&mut context);
+    let expanded = snapshot(&mut context, &view);
+    assert_eq!(
+        description_subtree(&expanded, "context:desk"),
+        desk,
+        "a local recipe change must leave the desk's whole description untouched"
+    );
+    let expanded_reference = description_subtree(&expanded, B);
+    assert!(
+        expanded_reference
+            .lines()
+            .next()
+            .unwrap()
+            .contains(" .p_4 .gap_3"),
+        "{expanded_reference}"
+    );
+    assert!(
+        expanded_reference
+            .lines()
+            .any(|line| line.contains("Input #") && line.contains(" .h_9")),
+        "{expanded_reference}"
+    );
+    assert!(
+        expanded_reference.contains("Document reference")
+            && expanded_reference.contains("This reference stays connected to the working draft."),
+        "caller slots must survive recipe changes: {expanded_reference}"
+    );
+    assert!(
+        expanded_reference.contains("Flow: flow-working"),
+        "the expanded recipe must restore the identity slot: {expanded_reference}"
+    );
+    assert!(
+        expanded.contains("source-document-42 · revision 1"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("A continuous body of work"), "{expanded}");
+    for (index, appearance) in [A, B].into_iter().enumerate() {
+        assert_eq!(
+            native_inputs(&mut context, appearance)[0].path(),
+            input_paths[index],
+            "local recipe changes must retain the native editor in {appearance}"
+        );
+        assert_eq!(copied_input(&mut context, appearance), DRAFT);
+    }
+    assert_eq!(
+        document_background(&mut context, A, "appearance-editor-a:commit"),
+        desk_background
+    );
+    assert_eq!(
+        document_background(&mut context, B, "appearance-editor-b:commit"),
+        reference_background
+    );
+    let assert_global_theme = |context: &mut VisualTestContext| {
+        context.update(|_, cx| {
+            let current = gpui_base::Theme::global(cx);
+            assert_eq!(current.appearance, base_theme.appearance);
+            assert_eq!(
+                current.tokens, base_theme.tokens,
+                "local presentation must not mutate Base's global tokens"
+            );
+            assert_eq!(
+                serde_json::to_value(gpui_component::Theme::global(cx)).unwrap(),
+                component_theme,
+                "local presentation must not mutate Component's global theme"
+            );
+        });
+    };
+    assert_global_theme(&mut context);
+
+    click_button(
+        &mut context,
+        "context:reference:toggle",
+        "Compact reference",
+    );
+    draw(&mut context);
+    let restored = snapshot(&mut context, &view);
+    assert_eq!(description_subtree(&restored, "context:desk"), desk);
+    assert_eq!(
+        description_subtree(&restored, B),
+        reference,
+        "the reference must restore its compact recipe, local density, and caller slots"
+    );
+    for (index, appearance) in [A, B].into_iter().enumerate() {
+        assert_eq!(
+            native_inputs(&mut context, appearance)[0].path(),
+            input_paths[index]
+        );
+        assert_eq!(copied_input(&mut context, appearance), DRAFT);
+    }
+    assert_eq!(
+        document_background(&mut context, A, "appearance-editor-a:commit"),
+        desk_background
+    );
+    assert_eq!(
+        document_background(&mut context, B, "appearance-editor-b:commit"),
+        reference_background
+    );
+    assert_global_theme(&mut context);
+}
+
 #[gpui::test]
 fn native_actions_preserve_the_shared_draft_when_the_source_changes(cx: &mut TestAppContext) {
     let (mut context, view, _app) = mount(cx);

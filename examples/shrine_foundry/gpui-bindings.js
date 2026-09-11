@@ -3,21 +3,28 @@ import { h_flex, v_flex, Input } from "gpui-base";
 import { Button } from "gpui-component";
 
 // Only this module knows how a fixture recipe becomes a GPUI element.
-// Native controls are rebuilt per snapshot; their editor state is retained by
-// the workbench per appearance. Styles consume the host's semantic colors.
+// Resolved context is an explicit argument, never a mutable global Theme.
+// Native editor state remains retained by the workbench per appearance.
 export function gpuiBindings(cx) {
-  const colors = cx.theme().colors;
+  const theme = cx.theme();
+  const colors = theme.colors;
   const children = (element, content) => content.reduce((parent, child) => parent.child(child), element);
   return {
     page: (_props, content) => children(v_flex().size_full().p_6().gap_4()
       .bg(colors.background).text_color(colors.foreground).text_sm()
       .id("foundry-workbench").overflow_y_scroll(), content),
-    row: (_props, content) => children(h_flex().w_full().items_start().gap_3().flex_wrap(), content),
+    row: (_props, content, context) => children(h_flex().w_full().items_start()
+      .gap(context.density === "compact" ? theme.spacing.sm : theme.spacing.md).flex_wrap(), content),
     stack: (_props, content) => children(v_flex().gap_1(), content),
-    panel: (props, content) => children(v_flex().id(props.id).flex_1().min_w("20rem")
-      .p_4().gap_3().rounded_lg().border_1().border_color(colors.border)
-      .bg(colors.surface), content),
-    record: (_props, content) => children(v_flex().p_3().gap_1().rounded_md()
+    embedding: (props, content) => children(v_flex().id(props.id).flex_1().min_w("20rem").gap_3(), content),
+    document: (props, content, context) => {
+      let panel = v_flex().id(props.id).w_full().rounded(theme.radius.md)
+        .border_1().border_color(colors.border).bg(colors[context.surface])
+        .text_color(context.surface === "surface" ? colors.surface_foreground : colors.foreground);
+      panel = context.density === "compact" ? panel.p_3().gap_2() : panel.p_4().gap_3();
+      return children(panel, content);
+    },
+    record: (_props, content) => children(v_flex().p_3().gap_1().rounded(theme.radius.md)
       .border_1().border_color(colors.border), content),
     text: ({ value, tone }) => {
       let element = div().child(String(value));
@@ -26,12 +33,17 @@ export function gpuiBindings(cx) {
       if (tone === "muted") element = element.text_xs().text_color(colors.muted_foreground);
       return element;
     },
-    button: ({ id, label, primary, run }) => {
-      let button = new Button(id).label(label).size("small").on_click((_event, eventCx) => run(eventCx));
+    button: ({ id, label, primary, run }, _content, context) => {
+      let button = new Button(id).label(label).size(context.density === "compact" ? "small" : "medium")
+        .on_click((_event, eventCx) => run(eventCx));
       if (primary) button = button.primary();
       return button;
     },
-    input: ({ state }) => Input.new(state).h_9().px_3().rounded_md().border_1()
-      .border_color(colors.input).bg(colors.background).text_sm(),
+    input: ({ state }, _content, context) => {
+      let input = Input.new(state).rounded(theme.radius.md).border_1()
+        .border_color(colors.input).bg(colors.background).text_color(colors.foreground).text_sm();
+      input = context.density === "compact" ? input.h_8().px_2() : input.h_9().px_3();
+      return input;
+    },
   };
 }

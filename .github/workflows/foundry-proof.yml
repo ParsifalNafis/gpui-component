@@ -53,7 +53,7 @@ jobs:
             foundry-proof-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-
             foundry-proof-${{ runner.os }}-${{ runner.arch }}-
       - name: Test fixture contracts
-        run: node --test examples/shrine_foundry/fixture.test.mjs
+        run: node --test examples/shrine_foundry/*.test.mjs
       - name: Test native composition
         run: cargo test --locked -p gpui-component-shell --test foundry_composition_host
       - name: Prepare matching shell binary
