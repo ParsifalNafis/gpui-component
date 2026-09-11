@@ -10,17 +10,28 @@ with the proof, separately from this roadmap.
 
 The [composition example](../examples/shrine_foundry/README.md#verification) now has
 a verified, limited checkpoint: at commit
-`191f86cc5f104ff611842492cfb6993b339851f9`, the
-[macOS arm64 CI run](https://github.com/ParsifalNafis/gpui-component/actions/runs/34547115363)
-passed 14 fixture tests and two mounted native interaction tests. These draw the
-actual example and dispatch native pointer/keyboard input. They verify external
-edit conflicts, shared draft text through native Copy, editor continuity through
-Move/Close/Reopen, and restricted commit refusal. CLI `check` has a confirmed
-eager-materialization failure described below. Local launch reached the native
-event loop, but pending
-macOS Computer Use permissions prevented interactive window inspection. That
-manual check and other platform paths remain unverified. The full acceptance
-criteria below remain a roadmap.
+`bf926ec1e0015d79e37698e64ba125d53cf16329`, the
+[macOS arm64 CI run](https://github.com/ParsifalNafis/gpui-component/actions/runs/34548554851)
+passed 22 Node tests and three mounted native interaction tests. These draw the
+actual example and dispatch native pointer/keyboard input. They verify local
+recipe/slot composition and actual painted surfaces, unchanged sibling/global
+presentation across Expand/Compact, shared draft text, editor continuity through
+Move/Close/Reopen, external edit conflicts, and restricted commit refusal.
+CLI `check` has a confirmed eager-materialization failure described below. Local
+launch produced no logged errors. Interactive window inspection remains
+unverified after earlier macOS permission blocks. That manual check and other
+platform paths remain unverified. The full acceptance criteria below remain a
+roadmap.
+
+The context-composition extension now embeds one `documentCard` in a writing
+desk and a reading pane. Hosts supply different heading/footer slots. Immutable
+contexts pass local recipe, density and semantic surface choices to the GPUI
+bindings; expanding/compacting the reading pane never installs a global Theme.
+Moving an appearance changes the receiving context while retaining source,
+draft and native editor identity. Supplied content takes the receiving context's
+presentation unless it introduces an inner scope; callbacks retain their creator's
+closures. These are bounded JS fixture rules, not Grove or Shadow DOM semantics.
+See the example's verification section for the extension's executed checks.
 
 The user supplied the older `JShrine/docs/PRODUCT-SCHEMA.md`, its user stories,
 and the [Grove reference](https://gist.github.com/liam-fitzgerald/20e28360b86b5f75011c77a4e2ae008d)
@@ -132,6 +143,11 @@ for code ([`policy.rs:73`](../crates/shell/src/policy.rs#L73)); it does not repl
 live contextual admission by the semantic owner.
 
 ### 3. Scoped Foundry realization
+
+The composition example exercises a bounded subset: inherited/default contexts,
+local document-recipe/density/surface overrides, and caller-supplied slots. Its
+resolver accepts only those fixture choices. It does not implement negotiation,
+accessibility precedence, provenance, semantic compatibility, or fallback policy.
 
 Resolve a local presentation snapshot from externally supplied role/context and
 available device features. Retain the complete semantic token snapshot and recipe
