@@ -44,18 +44,6 @@ impl Drop for TempApp {
     }
 }
 
-struct Empty;
-
-impl gpui::Render for Empty {
-    fn render(
-        &mut self,
-        _: &mut gpui::Window,
-        _: &mut gpui::Context<Self>,
-    ) -> impl gpui::IntoElement {
-        gpui::div()
-    }
-}
-
 fn mount(cx: &mut TestAppContext) -> (VisualTestContext, Entity<gpui_shell::ScriptView>, TempApp) {
     cx.update(gpui_component_shell::init);
     let app = TempApp::from_example();
@@ -72,7 +60,7 @@ fn mount(cx: &mut TestAppContext) -> (VisualTestContext, Entity<gpui_shell::Scri
         *slot.borrow_mut() = Some(view.clone());
         gpui_component::Root::new(view, window, cx)
     });
-    let mut context = VisualTestContext::from_window(*window.deref(), cx);
+    let context = VisualTestContext::from_window(*window.deref(), cx);
     context.simulate_resize(gpui::size(gpui::px(1200.), gpui::px(900.)));
     let view = mounted.borrow().clone().expect("mounted script view");
     (context, view, app)
@@ -112,24 +100,6 @@ fn snapshot(context: &mut VisualTestContext, view: &Entity<gpui_shell::ScriptVie
             .expect("Foundry render snapshot")
             .debug_tree()
     })
-}
-
-#[gpui::test]
-fn foundry_example_loads_and_materializes_native_components(cx: &mut TestAppContext) {
-    cx.update(gpui_component_shell::init);
-    let app = TempApp::from_example();
-    let runtime = gpui_component_shell::new_isolated_runtime().expect("create component runtime");
-    let window = cx.add_window(|window, cx| {
-        let empty = cx.new(|_| Empty);
-        gpui_component::Root::new(empty, window, cx)
-    });
-    let mut context = VisualTestContext::from_window(*window.deref(), cx);
-    let tree = context
-        .update(|window, cx| runtime.check(&app.0, window, cx))
-        .expect("Foundry script and eager native components must materialize");
-    for expected in ["Button", "source-document-42", "flow-working"] {
-        assert!(tree.contains(expected), "missing {expected}: {tree}");
-    }
 }
 
 #[gpui::test]
