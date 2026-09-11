@@ -61,7 +61,7 @@ jobs:
           if [ ! -x target/debug/gpui-component-shell ]; then
             cargo build --locked -p gpui-component-shell -p gpui-component --features gpui-component/test-support
           fi
-          lipo -verify_arch arm64 target/debug/gpui-component-shell
+          lipo target/debug/gpui-component-shell -verify_arch arm64
           mkdir -p proof
           cp target/debug/gpui-component-shell proof/
           printf '%s\n' "$GITHUB_SHA" > proof/COMMIT
