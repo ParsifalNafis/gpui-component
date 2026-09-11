@@ -1,6 +1,6 @@
 //! Exercises the Foundry example through the public shell host and native UI.
 
-use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use gpui_base::test_support;
 use std::{
     fs,
