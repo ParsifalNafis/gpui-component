@@ -18,8 +18,9 @@ From the repository root, with Rust and the platform prerequisites in the
 cargo run -p gpui-component-shell --bin gpui-component-shell -- examples/shrine_foundry
 ```
 
-The shell opens a native window and watches the example for changes. No JavaScript
-packages are required. The first Rust build downloads and compiles the toolkit.
+The shell opens a native window. Add `--watch` after the example path to reload
+when its sources change. No JavaScript packages are required. The first Rust
+build downloads and compiles the toolkit.
 
 ## Try it
 
@@ -45,6 +46,7 @@ packages are required. The first Rust build downloads and compiles the toolkit.
 | [gpui-bindings.js](gpui-bindings.js) | Maps those hooks to existing native controls, layout and semantic theme colors. |
 | [main.js](main.js) | Supplies appearance content and event intentions; retains a distinct `InputState` per mounted appearance. |
 | [fixture.test.mjs](fixture.test.mjs) | Behavioral checks for continuity, cross-Flow isolation, source-relative commits, revision conflicts, revocation, and stale search delivery. |
+| [foundry_composition_host.rs](../../crates/component-shell/tests/foundry_composition_host.rs) | Mounts the actual example in a GPUI test window and exercises native Button interactions. |
 
 Recipes are deliberately small. A production adapter must consume Grove's
 resolved declarations and admitted projections, replacing the fixture host. The
@@ -59,18 +61,40 @@ or a real asynchronous service.
 
 ```sh
 node --test examples/shrine_foundry/fixture.test.mjs
-cargo run -p gpui-component-shell --bin gpui-component-shell -- check examples/shrine_foundry
-cargo test -p gpui-component-shell --test foundry_composition_host
+cargo test --locked -p gpui-component-shell --test foundry_composition_host
 ```
 
-The Node checks exercise fixture behavior. The native integration test loads the
-actual example through the public shell API and checks rendering and interaction.
-`check` alone only proves initial eager materialization, not later events.
+At commit `191f86cc5f104ff611842492cfb6993b339851f9`, the
+[macOS arm64 CI run](https://github.com/ParsifalNafis/gpui-component/actions/runs/34547115363)
+passed all **14 Node fixture tests** and **two mounted native interaction tests**.
+Both load and draw the actual example through the public shell API, find native
+controls through `gpui_base::test_support`, and dispatch pointer/keyboard input:
 
-Validation so far (2026-09-10): all 14 fixture tests pass, the JavaScript files
-pass Node syntax checks, and the new Rust test passes `rustfmt --check`. Native
-compilation and interaction verification are still pending; do not treat this
-initial checkpoint as a verified native run.
+- **External edit and conflict:** native Button clicks change the source, then
+  attempt Commit. The conflict preserves both appearances' original draft bases
+  and the externally changed source.
+- **Editing and continuity:** native typing updates both editors, verified through
+  their Copy command, without committing the source. Move retains the editor;
+  Close releases it; Reopen creates a new editor with the retained draft and a
+  working change subscription. Restricting B then clicking its Commit produces
+  refusal while preserving the source and shared draft.
+
+The test harness enables `gpui-base/test-support` and
+`gpui-component/test-support` together in the
+[dev dependencies](../../crates/component-shell/Cargo.toml#L16); keep those features
+paired. This result covers the mounted GPUI test path. The CI binary from the
+earlier green code commit `72dc56c5` also launched locally on macOS and reached its
+event loop without logged errors; the later commit only extends the test harness.
+Interactive window inspection was blocked by pending macOS Accessibility and
+Screen Recording permissions; editing by hand remains unverified. The CI result
+does not establish browser or operating-system accessibility parity.
+
+The CLI `check` command currently aborts with exit code 134 for this example.
+Its eager materialization resolves `overflow_y_scroll` through a keyed
+`ScrollHandle` outside `request_layout`, `prepaint`, or `paint`, causing
+`Window::current_view` to panic. This is an existing eager-check path limitation;
+the mounted test exercises the normal draw phases instead. The failure is not
+specific to Input, and `check` is not a passing verification command for this proof.
 
 ## Limits and next steps
 

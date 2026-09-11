@@ -8,6 +8,20 @@ work. Source inspection and existing test definitions do not establish that a
 workflow has passed on a device. Record executed commands and observed behavior
 with the proof, separately from this roadmap.
 
+The [composition example](../examples/shrine_foundry/README.md#verification) now has
+a verified, limited checkpoint: at commit
+`191f86cc5f104ff611842492cfb6993b339851f9`, the
+[macOS arm64 CI run](https://github.com/ParsifalNafis/gpui-component/actions/runs/34547115363)
+passed 14 fixture tests and two mounted native interaction tests. These draw the
+actual example and dispatch native pointer/keyboard input. They verify external
+edit conflicts, shared draft text through native Copy, editor continuity through
+Move/Close/Reopen, and restricted commit refusal. CLI `check` has a confirmed
+eager-materialization failure described below. Local launch reached the native
+event loop, but pending
+macOS Computer Use permissions prevented interactive window inspection. That
+manual check and other platform paths remain unverified. The full acceptance
+criteria below remain a roadmap.
+
 The user supplied the older `JShrine/docs/PRODUCT-SCHEMA.md`, its user stories,
 and the [Grove reference](https://gist.github.com/liam-fitzgerald/20e28360b86b5f75011c77a4e2ae008d)
 as design requirements. They are not claims about implemented GPUI behavior or a
@@ -170,6 +184,22 @@ cargo test -p gpui-component --doc
 cargo test -p gpui-component-shell --all-targets
 cargo clippy -p gpui-component -p gpui-component-story -p gpui-kit-assets -- --deny warnings
 ```
+
+The focused proof command that passed in the linked CI run is
+`cargo test --locked -p gpui-component-shell --test foundry_composition_host`.
+Its harness uses `gpui_base::test_support::find` and `simulate_click`, with Base
+and Component `test-support` dev features enabled together. Preserve that pairing
+when modifying the harness; this mounted draw path does not rely on a separate
+`ShellRuntime::check` call.
+
+The CLI `check` command aborts with exit code 134 on this example:
+`overflow_y_scroll` materialization requests a keyed `ScrollHandle` through
+`Window::use_keyed_state` outside `request_layout`, `prepaint`, or `paint`, so
+`Window::current_view` panics. This existing eager-check path limitation is not
+specific to Input. Keep the mounted draw-phase test as the automated native proof;
+do not report CLI `check` as passing. Interactive application-window verification
+remains separate and was blocked by pending macOS Accessibility and Screen
+Recording permissions.
 
 The CI matrix additionally exercises workspace tests and shell suites separately
 ([`ci.yml:83`](../.github/workflows/ci.yml#L83),
